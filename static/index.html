@@ -1,1 +1,172 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>影视拍摄连续性</title><style>body{font:15px system-ui;max-width:1100px;margin:24px auto;padding:0 16px;background:#f3f4f7}section{background:#fff;padding:16px;margin:12px 0;border:1px solid #ddd;border-radius:10px}input,textarea,select,button{padding:7px;margin:3px;border:1px solid #aaa;border-radius:6px}button{background:#4b2d6f;color:#fff}pre{white-space:pre-wrap;max-height:420px;overflow:auto}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.grid input,.grid textarea{width:90%}</style><h1>影视拍摄连续性管理</h1><section><h2>连续性报告</h2><input id="production" type="number" placeholder="项目 ID"><button onclick="report()">查看报告</button><pre id="state"></pre></section><section><h2>状态与冲突</h2><div class="grid"><input id="scene" type="number" placeholder="场次 ID"><input id="shot" type="number" placeholder="镜头 ID"><input id="element" type="number" placeholder="元素 ID"><input id="user" type="number" placeholder="场记/制片 ID"><input id="value" placeholder="状态值"><input id="numeric" type="number" step="0.1" placeholder="数值"><input id="conflict" type="number" placeholder="冲突 ID"><input id="reviewer" type="number" placeholder="审片人 ID"><input id="reason" placeholder="理由"></div><button onclick="state()">设置状态并检测</button><button onclick="check()">重新检查场次</button><button onclick="lock()">锁定镜头</button><button onclick="exempt()">批准豁免</button><pre id="result"></pre></section><section><h2>调整方案</h2><input id="newvalue" placeholder="新状态"><input id="newnumeric" type="number" step="0.1" placeholder="新数值"><button onclick="propose()">提出方案</button><input id="plan" type="number" placeholder="方案 ID"><button onclick="approve()">批准方案</button><pre id="extra"></pre></section><script>const show=(e,x)=>document.querySelector(e).textContent=JSON.stringify(x,null,2);async function get(u,e='#result'){show(e,await(await fetch(u)).json())}async function post(u,b,e='#result'){show(e,await(await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})).json())}function report(){get('/api/productions/'+production.value+'/continuity','#state')}function state(){post('/api/shots/'+shot.value+'/states',{element_id:+element.value,state_value:value.value,numeric_value:numeric.value?+numeric.value:null,note:reason.value,user_id:+user.value})}function check(){post('/api/scenes/'+scene.value+'/check',{})}function lock(){post('/api/shots/'+shot.value+'/lock',{user_id:+user.value})}function exempt(){post('/api/conflicts/'+conflict.value+'/exemptions',{reason:reason.value,reviewer_id:+reviewer.value})}function propose(){post('/api/conflicts/'+conflict.value+'/plans',{new_value:newvalue.value,numeric_value:newnumeric.value?+newnumeric.value:null,reason:reason.value,user_id:+user.value})}function approve(){post('/api/plans/'+plan.value+'/review',{approve:true,reviewer_id:+reviewer.value,note:reason.value},'#extra')}report()</script></html>
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>影视拍摄连续性 · 整片预检与放行</title>
+<style>
+body{font:15px system-ui;max-width:1180px;margin:22px auto;padding:0 16px;background:#f3f4f7;color:#222}
+h1{font-size:22px}
+section{background:#fff;padding:16px;margin:12px 0;border:1px solid #ddd;border-radius:10px}
+input,textarea,button{padding:7px;margin:3px;border:1px solid #aaa;border-radius:6px;font-size:14px}
+button{background:#4b2d6f;color:#fff;cursor:pointer}
+button.gray{background:#666}
+pre{white-space:pre-wrap;max-height:360px;overflow:auto;background:#fafafa;padding:8px;border-radius:6px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.grid input{width:92%}
+table{border-collapse:collapse;width:100%;margin-top:8px}
+th,td{border:1px solid #e0e0e0;padding:6px 8px;text-align:left;vertical-align:top;font-size:14px}
+th{background:#f0edf6}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;color:#fff;font-size:12px}
+.b-blocked{background:#c0392b}.b-ready{background:#d68910}.b-released{background:#1e8449}
+.b-empty{background:#999}.b-cross{background:#b9770e}.b-within{background:#7d669e}
+.b-open{background:#c0392b}.b-exempted{background:#1e8449}
+.reasons{color:#c0392b;margin:4px 0 0;padding-left:18px}
+.muted{color:#888;font-size:13px}
+.scope-note{background:#fdf6ec;border-color:#e8d5ac}
+</style>
+<h1>影视拍摄连续性管理 · 整片预检与放行</h1>
+<p class="muted">按叙事顺序同时检查单场内冲突与相邻场次首尾的跨场衔接；未处理（未豁免）问题未清前，场次不能排期或放行。制片/场记维护拍摄日、场次顺序和放行，审片人只处理风险（调整方案、豁免）。</p>
+
+<section>
+  <h2>整片预检与排期看板</h2>
+  项目 <input id="production" type="number" placeholder="项目 ID" style="width:90px">
+  制片/场记 <input id="planner" type="number" placeholder="用户 ID" style="width:90px">
+  <button onclick="report()">整片预检/刷新</button>
+  <div id="board"></div>
+</section>
+
+<section class="scope-note">
+  <h2>拍摄日与排期（制片 / 场记）</h2>
+  <div class="grid">
+    <input id="daycode" placeholder="拍摄日编号 如 Day2">
+    <input id="daydate" placeholder="日期 如 2026-10-01">
+    <input id="daynote" placeholder="备注">
+    <input id="dayuser" type="number" placeholder="制片/场记 ID">
+    <input id="scenid" type="number" placeholder="场次 ID">
+    <input id="dayid" type="number" placeholder="拍摄日 ID">
+    <input id="dayorder" type="number" placeholder="日内拍摄顺序">
+  </div>
+  <button class="gray" onclick="createDay()">新建拍摄日</button>
+  <button onclick="schedule()">排入拍摄日</button>
+  <button onclick="release()">预检并放行场次</button>
+  <button class="gray" onclick="unrelease()">撤回放行</button>
+  <button class="gray" onclick="unschedule()">移出拍摄日</button>
+  <pre id="planner-result"></pre>
+</section>
+
+<section>
+  <h2>状态、冲突与锁定（制片 / 场记）</h2>
+  <div class="grid">
+    <input id="scene" type="number" placeholder="场次 ID">
+    <input id="shot" type="number" placeholder="镜头 ID">
+    <input id="element" type="number" placeholder="元素 ID">
+    <input id="user" type="number" placeholder="场记/制片 ID">
+    <input id="value" placeholder="状态值">
+    <input id="numeric" type="number" step="0.1" placeholder="数值">
+    <input id="conflict" type="number" placeholder="冲突 ID">
+    <input id="newvalue" placeholder="调整新状态">
+    <input id="newnumeric" type="number" step="0.1" placeholder="调整新数值">
+  </div>
+  <input id="reason" placeholder="理由 / 备注" style="width:70%">
+  <br>
+  <button onclick="state()">设置状态并重检</button>
+  <button class="gray" onclick="check()">重新检查场次</button>
+  <button onclick="lock()">锁定镜头</button>
+  <button onclick="propose()">对冲突提调整方案</button>
+  <pre id="result"></pre>
+</section>
+
+<section>
+  <h2>风险处理（审片人）</h2>
+  审片人 <input id="reviewer" type="number" placeholder="审片人 ID" style="width:110px">
+  <input id="plan" type="number" placeholder="方案 ID" style="width:110px">
+  <input id="exreason" placeholder="豁免理由（至少 8 字）" style="width:45%">
+  <button onclick="approve()">批准调整方案</button>
+  <button onclick="reject()">驳回方案</button>
+  <button onclick="exempt()">批准豁免</button>
+  <pre id="extra"></pre>
+</section>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const badge=(cls,txt)=>`<span class="badge ${cls}">${esc(txt)}</span>`;
+const SCENE_STATUS={blocked:["b-blocked","阻断"],ready:["b-ready","可放行"],released:["b-released","已放行"]};
+const DAY_STATUS={blocked:["b-blocked","有阻断"],ready:["b-ready","可拍摄"],released:["b-released","场次全放行"],empty:["b-empty","未排场"]};
+let DATA=null;
+
+async function call(method,url,body,target){
+  const res=await fetch(url,{method,headers:{"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});
+  const json=await res.json(); $(target).textContent=JSON.stringify(json,null,2);
+  if(res.ok&&json.ok!==false&&$("#production").value) report();
+  return json;
+}
+const post=(u,b,t="#result")=>call("POST",u,b,t);
+
+async function report(){
+  const pid=$("#production").value; if(!pid)return;
+  DATA=await (await fetch("/api/productions/"+pid+"/continuity")).json();
+  if(DATA.ok===false){$("#board").innerHTML="<p style='color:#c0392b'>"+esc(DATA.error)+"</p>";return;}
+  renderBoard();
+}
+
+function conflictRow(c){
+  const scope=c.scope==="cross"
+    ?badge("b-cross","跨场")+` ${esc(c.from_scene_number)} ${esc(c.from_shot_code)} → ${esc(c.to_scene_number)} ${esc(c.to_shot_code)}`
+    :badge("b-within","单场")+` ${esc(c.to_scene_number)} ${esc(c.from_shot_code)} → ${esc(c.to_shot_code)}`;
+  const st=c.status==="exempted"?badge("b-exempted","已豁免"):badge("b-open","待处理");
+  return `<tr><td>#${c.id}</td><td>${scope}</td><td>${esc(c.element_name)}</td>
+    <td>${esc(c.kind)}</td><td>${st}</td><td>${esc(c.detail)}</td>
+    <td><button class="gray" onclick="pickConflict(${c.id})">处理</button></td></tr>`;
+}
+
+function renderBoard(){
+  const d=DATA;
+  let html=`<h3>拍摄日状态</h3><table><tr><th>拍摄日</th><th>日期</th><th>状态</th><th>场次（按日内顺序）</th></tr>`;
+  if(!d.shoot_days.length) html+=`<tr><td colspan="4" class="muted">还没有拍摄日</td></tr>`;
+  for(const day of d.shoot_days){
+    const names=day.scene_ids.map(id=>{const s=d.scenes.find(x=>x.id===id);
+      return s?`${esc(s.scene_number)}(顺序${s.day_order})`:"";}).join("，")||'<span class="muted">未排场</span>';
+    const [cls,txt]=DAY_STATUS[day.status]||DAY_STATUS.empty;
+    html+=`<tr><td>${esc(day.day_code)}</td><td>${esc(day.shoot_date)}</td><td>${badge(cls,txt)}</td><td>${names}</td></tr>`;
+  }
+  html+=`</table><p class="muted">未排期场次：${d.unscheduled_scene_ids.length?esc(d.unscheduled_scene_ids.join("、")):"无"}　待处理冲突 ${d.open_conflicts} 个（其中跨场衔接 ${d.open_cross_conflicts} 个），已豁免 ${d.exempted_conflicts} 个</p>`;
+
+  html+=`<h3>场次叙事顺序与放行状态</h3><table><tr><th>叙事序</th><th>场次</th><th>标题</th><th>拍摄日</th><th>放行状态</th><th>阻断原因 / 待处理问题</th></tr>`;
+  for(const s of d.scenes){
+    const day=s.shoot_day_id?((d.shoot_days.find(x=>x.id===s.shoot_day_id)||{}).day_code||"#"+s.shoot_day_id):'<span class="muted">未排期</span>';
+    const [cls,txt]=SCENE_STATUS[s.status]||["b-empty",s.status];
+    let reasons=s.blocked_reasons.length?`<ul class="reasons">${s.blocked_reasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul>`:'<span class="muted">无</span>';
+    html+=`<tr><td>${s.narrative_order}</td><td>${esc(s.scene_number)}</td><td>${esc(s.title)}</td>
+      <td>${day}${s.day_order?` / 顺序${s.day_order}`:""}</td><td>${badge(cls,txt)}${s.released?"":"（未放行）"}</td><td>${reasons}</td></tr>`;
+  }
+  html+=`</table>`;
+
+  const pending=d.scenes.flatMap(s=>s.conflicts).filter(c=>c.active).sort((a,b)=>a.id-b.id);
+  html+=`<h3>待处理问题（单场 + 跨场衔接）</h3>`;
+  if(!pending.length) html+='<p class="muted">没有活跃冲突，所有场次均可排期/放行。</p>';
+  else html+=`<table><tr><th>ID</th><th>范围</th><th>元素</th><th>类型</th><th>状态</th><th>说明</th><th></th></tr>${pending.map(conflictRow).join("")}</table>`;
+  $("#board").innerHTML=html;
+}
+
+function pickConflict(id){ $("#conflict").value=id; window.scrollTo(0,document.body.scrollHeight); }
+
+function createDay(){ post("/api/productions/"+$("#production").value+"/shoot-days",
+  {day_code:$("#daycode").value,shoot_date:$("#daydate").value,note:$("#daynote").value,user_id:+$("#dayuser").value},"#planner-result"); }
+function schedule(){ post("/api/scenes/"+$("#scenid").value+"/schedule",
+  {user_id:+$("#dayuser").value,shoot_day_id:$("#dayid").value?+$("#dayid").value:null,day_order:$("#dayorder").value?+$("#dayorder").value:null},"#planner-result"); }
+function release(){ post("/api/scenes/"+$("#scenid").value+"/release",{user_id:+$("#dayuser").value,release:true},"#planner-result"); }
+function unrelease(){ post("/api/scenes/"+$("#scenid").value+"/release",{user_id:+$("#dayuser").value,release:false},"#planner-result"); }
+function unschedule(){ post("/api/scenes/"+$("#scenid").value+"/schedule",{user_id:+$("#dayuser").value,shoot_day_id:null,day_order:null},"#planner-result"); }
+
+function state(){ post("/api/shots/"+$("#shot").value+"/states",{element_id:+$("#element").value,state_value:$("#value").value,numeric_value:$("#numeric").value?+$("#numeric").value:null,note:$("#reason").value,user_id:+$("#user").value}); }
+function check(){ post("/api/scenes/"+$("#scene").value+"/check",{}); }
+function lock(){ post("/api/shots/"+$("#shot").value+"/lock",{user_id:+$("#user").value}); }
+function propose(){ post("/api/conflicts/"+$("#conflict").value+"/plans",{new_value:$("#newvalue").value,numeric_value:$("#newnumeric").value?+$("#newnumeric").value:null,reason:$("#reason").value,user_id:+$("#user").value}); }
+
+function approve(){ post("/api/plans/"+$("#plan").value+"/review",{approve:true,reviewer_id:+$("#reviewer").value,note:$("#exreason").value},"#extra"); }
+function reject(){ post("/api/plans/"+$("#plan").value+"/review",{approve:false,reviewer_id:+$("#reviewer").value,note:$("#exreason").value},"#extra"); }
+function exempt(){ post("/api/conflicts/"+$("#conflict").value+"/exemptions",{reason:$("#exreason").value,reviewer_id:+$("#reviewer").value},"#extra"); }
+
+report();
+</script>
+</html>

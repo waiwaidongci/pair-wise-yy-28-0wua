@@ -6,6 +6,11 @@ from urllib.parse import parse_qs, urlparse
 from database import ContinuityDB, DomainError
 
 BASE=Path(__file__).resolve().parent; DB_PATH=os.environ.get("CONTINUITY_DB",str(BASE/"continuity.db"))
+
+def opt_int(b,key):
+    v=b.get(key)
+    return int(v) if v not in (None,"") else None
+
 class Handler(BaseHTTPRequestHandler):
     db=ContinuityDB(DB_PATH)
     def log_message(self,fmt,*args): return
@@ -24,6 +29,7 @@ class Handler(BaseHTTPRequestHandler):
                 data=(BASE/"static"/"index.html").read_bytes(); self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data); return
             if p.path=="/api/state": return self._json(200,self.db.snapshot())
             if len(parts)==4 and parts[:2]==["api","productions"] and parts[3]=="continuity": return self._json(200,self.db.continuity_report(int(parts[2])))
+            if len(parts)==4 and parts[:2]==["api","productions"] and parts[3]=="precheck": return self._json(200,self.db.check_production(int(parts[2])))
             if len(parts)==4 and parts[:2]==["api","scenes"] and parts[3]=="conflicts": return self._json(200,{"conflicts":self.db.list_conflicts(int(parts[2]),True)})
             self._json(404,{"ok":False,"error":"接口不存在"})
         except (DomainError,ValueError) as exc: self._json(400,{"ok":False,"error":str(exc)})
@@ -33,10 +39,21 @@ class Handler(BaseHTTPRequestHandler):
             b=self._body()
             if path=="/api/users": return self._json(201,{"ok":True,"id":self.db.add_user(str(b.get("name","")),str(b.get("role","continuity")))})
             if path=="/api/productions": return self._json(201,{"ok":True,"id":self.db.create_production(str(b.get("title","")),str(b.get("description","")),int(b.get("user_id",0)))})
+            if len(parts)==4 and parts[:2]==["api","productions"] and parts[3]=="precheck": return self._json(200,{"ok":True,**self.db.check_production(int(parts[2]))})
+            if len(parts)==4 and parts[:2]==["api","productions"] and parts[3]=="shoot-days": return self._json(201,{"ok":True,"id":self.db.add_shoot_day(int(parts[2]),str(b.get("day_code","")),str(b.get("shoot_date","")),str(b.get("note","")),int(b.get("user_id",0)))})
             if len(parts)==4 and parts[:2]==["api","productions"] and parts[3]=="scenes": return self._json(201,{"ok":True,"id":self.db.add_scene(int(parts[2]),str(b.get("scene_number","")),str(b.get("title","")),int(b.get("narrative_order",0)))})
             if len(parts)==4 and parts[:2]==["api","productions"] and parts[3]=="elements": return self._json(201,{"ok":True,"id":self.db.add_element(int(parts[2]),str(b.get("name","")),str(b.get("kind","prop")),str(b.get("rule","stable")),str(b.get("description","")))})
             if len(parts)==4 and parts[:2]==["api","scenes"] and parts[3]=="shots": return self._json(201,{"ok":True,"id":self.db.add_shot(int(parts[2]),str(b.get("shot_code","")),int(b.get("shoot_order",0)),int(b.get("narrative_order",0)),str(b.get("description","")),int(b.get("user_id",0)))})
             if len(parts)==4 and parts[:2]==["api","scenes"] and parts[3]=="check": return self._json(200,{"ok":True,"conflicts":self.db.check_scene(int(parts[2]))})
+            if len(parts)==4 and parts[:2]==["api","scenes"] and parts[3]=="schedule":
+                result=self.db.schedule_scene(int(parts[2]),int(b.get("user_id",0)),opt_int(b,"shoot_day_id"),opt_int(b,"day_order"))
+                return self._json(200,{"ok":True,**result})
+            if len(parts)==4 and parts[:2]==["api","scenes"] and parts[3]=="release":
+                if b.get("release",True):
+                    result=self.db.release_scene(int(parts[2]),int(b.get("user_id",0)))
+                else:
+                    result=self.db.unrelease_scene(int(parts[2]),int(b.get("user_id",0)))
+                return self._json(200,{"ok":True,**result})
             if len(parts)==4 and parts[:2]==["api","shots"] and parts[3]=="states": return self._json(200,{"ok":True,**self.db.set_element_state(int(parts[2]),int(b.get("element_id",0)),str(b.get("state_value","")),b.get("numeric_value"),str(b.get("note","")),int(b.get("user_id",0)))})
             if len(parts)==4 and parts[:2]==["api","shots"] and parts[3]=="lock": self.db.lock_shot(int(parts[2]),int(b.get("user_id",0))); return self._json(200,{"ok":True})
             if len(parts)==4 and parts[:2]==["api","elements"] and parts[3]=="transitions": return self._json(201,{"ok":True,"id":self.db.add_transition(int(parts[2]),str(b.get("from_state","")),str(b.get("to_state","")),str(b.get("note","")))})
